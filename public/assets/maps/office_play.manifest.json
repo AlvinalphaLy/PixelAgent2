@@ -1,0 +1,16 @@
+[
+ {
+  "key": "office_floor_walls",
+  "image": "assets/tilesets/office_floor_walls.png",
+  "firstgid": 1,
+  "tilecount": 224,
+  "columns": 16
+ },
+ {
+  "key": "furniture",
+  "image": "assets/tilesets/furniture.png",
+  "firstgid": 225,
+  "tilecount": 848,
+  "columns": 16
+ }
+]

@@ -1,0 +1,7 @@
+# LimeZu art — license forbids redistribution
+public/assets/tilesets/
+public/assets/characters/*.png
+maps/tilesets/*.png
+maps/*_preview.png
+
+node_modules/

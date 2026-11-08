@@ -1,0 +1,41 @@
+{
+ "frameWidth": 16,
+ "frameHeight": 32,
+ "directions": [
+  "right",
+  "up",
+  "left",
+  "down"
+ ],
+ "characters": [
+  "Adam",
+  "Alex",
+  "Amelia",
+  "Bob"
+ ],
+ "sheets": {
+  "idle": {
+   "framesPerDir": 1
+  },
+  "idle_anim": {
+   "framesPerDir": 6,
+   "rate": 6
+  },
+  "run": {
+   "framesPerDir": 6,
+   "rate": 10
+  },
+  "sit": {
+   "framesPerDir": 6,
+   "rate": 6
+  },
+  "sit2": {
+   "framesPerDir": 6,
+   "rate": 6
+  },
+  "sit3": {
+   "framesPerDir": 3,
+   "rate": 6
+  }
+ }
+}

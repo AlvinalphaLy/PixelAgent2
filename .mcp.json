@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tiled": {
+      "command": "tiled-mcp",
+      "args": ["--project-root", "D:/PixelAgents2/maps"]
+    }
+  }
+}
