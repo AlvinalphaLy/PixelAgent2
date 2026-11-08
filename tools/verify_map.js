@@ -20,33 +20,43 @@ const ase = require('./aseprite.js');
 const png = require('./png.js');
 
 const TILE = 16;
-const TMJ = 'maps/office_v2.tmj';
+// `node tools/verify_map.js [office_v2|office_v3]` — office_v3's reference is the composite
+// produced by tools/compose_designs.js, and it has no GIF to check against.
+const MAP_NAME = process.argv[2] || 'office_v2';
+const TMJ = `maps/${MAP_NAME}.tmj`;
 const ASE = 'public/assets/tilesets/Modern_Office_Revamped_v1.2/6_Office_Designs/Office_Design_2.aseprite';
 const RASTERIZER = 'C:/Program Files/Tiled/tmxrasterizer.exe';
-const OUT = process.env.VERIFY_OUT ||
-  'C:/Users/alvin/AppData/Local/Temp/claude/d--PixelAgents2/ba7261ae-5370-41e3-88dc-68802d6b2247/scratchpad';
-const GIF_RGBA = path.join(process.env.RGBA_CACHE ||
-  'C:/Users/alvin/AppData/Local/Temp/claude/d--PixelAgents2/ba7261ae-5370-41e3-88dc-68802d6b2247/scratchpad/rgba', 'ref');
+const OUT = process.env.VERIFY_OUT || '.cache';
+const GIF_RGBA = path.join(process.env.RGBA_CACHE || '.cache/rgba', 'ref');
 
-const renderPath = path.join(OUT, 'verify_render.png');
+fs.mkdirSync(OUT, { recursive: true });
+const renderPath = path.join(OUT, `verify_render_${MAP_NAME}.png`);
 execFileSync(RASTERIZER, [TMJ, renderPath]);
 const mine = png.decodeToBGRA(fs.readFileSync(renderPath));
 const W = mine.width, H = mine.height;
 
-const doc = ase.parse(ASE);
-const truth = Buffer.alloc(doc.width * doc.height * 4, 0);
-for (const l of doc.layers) {
-  const p = ase.layerToBGRA(doc, l.index, 0);
-  for (let i = 0; i < truth.length; i += 4) {
-    const a = p[i + 3];
-    if (!a) continue;
-    if (a === 255) { truth[i] = p[i]; truth[i + 1] = p[i + 1]; truth[i + 2] = p[i + 2]; truth[i + 3] = 255; }
-    else {
-      const ia = 255 - a;
-      truth[i] = Math.round((p[i] * a + truth[i] * ia) / 255);
-      truth[i + 1] = Math.round((p[i + 1] * a + truth[i + 1] * ia) / 255);
-      truth[i + 2] = Math.round((p[i + 2] * a + truth[i + 2] * ia) / 255);
-      truth[i + 3] = Math.max(truth[i + 3], a);
+let doc, truth;
+if (MAP_NAME === 'office_v3') {
+  const compose = require('./compose_designs.js');
+  const comp = compose.compose();
+  doc = { width: comp.width, height: comp.height };
+  truth = compose.flatten(comp);
+} else {
+  doc = ase.parse(ASE);
+  truth = Buffer.alloc(doc.width * doc.height * 4, 0);
+  for (const l of doc.layers) {
+    const p = ase.layerToBGRA(doc, l.index, 0);
+    for (let i = 0; i < truth.length; i += 4) {
+      const a = p[i + 3];
+      if (!a) continue;
+      if (a === 255) { truth[i] = p[i]; truth[i + 1] = p[i + 1]; truth[i + 2] = p[i + 2]; truth[i + 3] = 255; }
+      else {
+        const ia = 255 - a;
+        truth[i] = Math.round((p[i] * a + truth[i] * ia) / 255);
+        truth[i + 1] = Math.round((p[i + 1] * a + truth[i + 1] * ia) / 255);
+        truth[i + 2] = Math.round((p[i + 2] * a + truth[i + 2] * ia) / 255);
+        truth[i + 3] = Math.max(truth[i + 3], a);
+      }
     }
   }
 }
@@ -71,7 +81,7 @@ for (let y = 0; y < H; y++) {
     }
   }
 }
-fs.writeFileSync(path.join(OUT, 'verify_diff.png'), png.encodeBGRA(diff, W, H));
+fs.writeFileSync(path.join(OUT, `verify_diff_${MAP_NAME}.png`), png.encodeBGRA(diff, W, H));
 
 const differing = considered - same;
 const pct = (100 * same / considered).toFixed(4);
@@ -81,12 +91,15 @@ console.log(`cells w/ diffs  : ${perCell.size}`);
 if (differing) {
   console.log('worst cells     :', [...perCell.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)
     .map(([k, v]) => `${k}:${v}`).join('  '));
-  console.log(`diff image      : ${path.join(OUT, 'verify_diff.png')}`);
+  console.log(`diff image      : ${path.join(OUT, `verify_diff_${MAP_NAME}.png`)}`);
 }
 
 // --- GIF assertion: our render upscaled 2x must equal GIF frame 0 on content pixels.
 let gifDiff = null;
-try {
+if (MAP_NAME === 'office_v3') {
+  gifDiff = 0;
+  console.log('vs GIF (2x)     : n/a (composite has no GIF)');
+} else try {
   const meta = JSON.parse(fs.readFileSync(GIF_RGBA + '.json', 'utf8').replace(/^﻿/, ''));
   const gif = fs.readFileSync(GIF_RGBA + '.rgba');
   let gSame = 0, gCons = 0;

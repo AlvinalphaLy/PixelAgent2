@@ -17,13 +17,20 @@
  * (8.66 vs 7.5) so it faces right. For sit, frames 0-5 all face right and 6-11 are their
  * mirrors, confirmed by eye at 8x.
  *
- * NOT registered, because their layout is still unverified — do not add them by guessing:
- *   sit3  (192x32) reads as pairs at 32 wide, so it is neither of the two shapes above
+ *   sit3                   : 16x32, sitting FACING THE VIEWER (down), 12 frames = two 6-frame
+ *                            loops (head turned one way, then the other). Measured: every frame's
+ *                            content spans x 0-15, so frames are 16 wide, not 32; feet on row 30.
+ *
+ * There is no sitting-from-behind sheet. Facing up is drawn the way LimeZu's own Office_Design_2
+ * does it: the walking 'up' frame, with the chair drawn back over the character (GameScene).
+ *
+ * NOT registered, because its layout is still unverified — do not add it by guessing:
  *   phone (144x32) 9 frames, which divides by neither 4 nor 2 directions
  */
 const CharacterAnims = {
   DIRS4: ['right', 'up', 'left', 'down'],
   DIRS2: ['right', 'left'],
+  DIRS1: ['down'],
 
   SHEETS: {
     idle:      { w: 16, dirs: 4, framesPerDir: 1, rate: 1,  repeat: -1 },
@@ -31,6 +38,7 @@ const CharacterAnims = {
     run:       { w: 16, dirs: 4, framesPerDir: 6, rate: 10, repeat: -1 },
     sit:       { w: 32, dirs: 2, framesPerDir: 6, rate: 6,  repeat: -1 },
     sit2:      { w: 32, dirs: 2, framesPerDir: 6, rate: 6,  repeat: -1 },
+    sit3:      { w: 16, dirs: 1, framesPerDir: 6, rate: 4,  repeat: -1 },
   },
 
   // Base walking-frame size. Sheets may be wider (sit is 32) — see SHEETS[].w — but the
@@ -38,7 +46,10 @@ const CharacterAnims = {
   FRAME_W: 16,
   FRAME_H: 32,
 
-  dirsFor(sheet) { return this.SHEETS[sheet].dirs === 2 ? this.DIRS2 : this.DIRS4; },
+  dirsFor(sheet) {
+    const n = this.SHEETS[sheet].dirs;
+    return n === 1 ? this.DIRS1 : n === 2 ? this.DIRS2 : this.DIRS4;
+  },
   textureKey(name, sheet) { return `char-${name}-${sheet}`; },
   animKey(name, sheet, dir) { return `${name}-${sheet}-${dir}`; },
 
@@ -46,7 +57,7 @@ const CharacterAnims = {
   resolveDir(sheet, dir) {
     const dirs = this.dirsFor(sheet);
     if (dirs.includes(dir)) return dir;
-    return 'right';
+    return dirs[0];
   },
 
   preload(scene, name) {

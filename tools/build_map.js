@@ -1,6 +1,7 @@
 'use strict';
 /*
- * Builds maps/office_v2.tmj so it reproduces Office_Design_2 pixel-for-pixel.
+ * Builds maps/office_v2.tmj so it reproduces Office_Design_2 pixel-for-pixel — or, with
+ * `node tools/build_map.js office_v3`, the combined Office_Design_1 + Office_Design_2 layout.
  *
  * The reference GIF is exactly a 2x nearest upscale of Office_Design_2.aseprite (verified:
  * 58378/58378 px at offset 0,0), so matching the aseprite at 1x is matching the GIF.
@@ -24,12 +25,26 @@ const png = require('./png.js');
 
 const TILE = 16;
 const PX = TILE * TILE;
-const CACHE = process.env.RGBA_CACHE ||
-  'C:/Users/alvin/AppData/Local/Temp/claude/d--PixelAgents2/ba7261ae-5370-41e3-88dc-68802d6b2247/scratchpad/rgba';
-const ASE = 'public/assets/tilesets/Modern_Office_Revamped_v1.2/6_Office_Designs/Office_Design_2.aseprite';
+const CACHE = process.env.RGBA_CACHE || '.cache/rgba';
 const PACK = 'public/assets/tilesets/Modern_Office_Revamped_v1.2';
 const TS_DIR = 'maps/tilesets';
-const OUT_TMJ = 'maps/office_v2.tmj';
+
+// Which map to build: `node tools/build_map.js [office_v2|office_v3]`.
+//   office_v2 — Office_Design_2 alone (the original pixel-perfect reproduction)
+//   office_v3 — Office_Design_1 joined to the left of Office_Design_2 (tools/compose_designs.js)
+// Each map gets its own generated character/patch sheets so building one never clobbers another.
+const MAPS = {
+  office_v2: { source: `${PACK}/6_Office_Designs/Office_Design_2.aseprite`, suffix: '' },
+  // office_v3 also gets the seat-aware collision rules and a Seats layer (see below); office_v2
+  // is deliberately left exactly as it was.
+  office_v3: { source: 'compose', suffix: '_v3', seatRules: true, properties: [{ name: 'camera', type: 'string', value: 'follow' }] },
+};
+const MAP_NAME = process.argv[2] || 'office_v2';
+const CFG = MAPS[MAP_NAME];
+if (!CFG) throw new Error(`unknown map "${MAP_NAME}" — expected one of: ${Object.keys(MAPS).join(', ')}`);
+const OUT_TMJ = `maps/${MAP_NAME}.tmj`;
+const CHAR_FILE = `characters${CFG.suffix}`;
+const PATCH_FILE = `patch${CFG.suffix}`;
 const CHARACTER_LAYER = 2;
 const MAX_CANDIDATES = 1200;
 
@@ -99,9 +114,18 @@ for (const list of byColor.values()) {
 
 // ---------------------------------------------------------------- aseprite
 
-const doc = ase.parse(ASE);
+let doc, layerPx, forceBlocked = [];
+if (CFG.source === 'compose') {
+  const comp = require('./compose_designs.js').compose();
+  doc = { width: comp.width, height: comp.height, layers: comp.layers };
+  layerPx = comp.layerPx;
+  forceBlocked = comp.forceBlocked || [];
+} else {
+  doc = ase.parse(CFG.source);
+  layerPx = doc.layers.map((l) => ase.layerToBGRA(doc, l.index, 0));
+}
 const W = doc.width, H = doc.height;
-const layerPx = doc.layers.map((l) => ase.layerToBGRA(doc, l.index, 0));
+console.log(`building ${MAP_NAME} from ${CFG.source === 'compose' ? 'Office_Design_1 + Office_Design_2' : CFG.source}`);
 
 let minX = W, minY = H, maxX = -1, maxY = -1;
 for (const px of layerPx) {
@@ -446,16 +470,16 @@ for (const s of activeSheets) {
     `tilewidth="16" tileheight="16" tilecount="${s.cols * s.rows}" columns="${s.cols}">\n` +
     ` <image source="${s.file}" width="${s.width}" height="${s.height}"/>\n</tileset>\n`);
 }
-fs.writeFileSync(path.join(TS_DIR, 'characters.png'), png.encodeBGRA(charSheet, charSheetW, charRows * TILE));
-fs.writeFileSync(path.join(TS_DIR, 'characters.tsx'),
-  `<?xml version="1.0" encoding="UTF-8"?>\n<tileset version="1.10" tiledversion="1.12.1" name="Design_Characters_16x16" ` +
+fs.writeFileSync(path.join(TS_DIR, `${CHAR_FILE}.png`), png.encodeBGRA(charSheet, charSheetW, charRows * TILE));
+fs.writeFileSync(path.join(TS_DIR, `${CHAR_FILE}.tsx`),
+  `<?xml version="1.0" encoding="UTF-8"?>\n<tileset version="1.10" tiledversion="1.12.1" name="Design_Characters${CFG.suffix}_16x16" ` +
   `tilewidth="16" tileheight="16" tilecount="${charCols * charRows}" columns="${charCols}">\n` +
-  ` <image source="characters.png" width="${charSheetW}" height="${charRows * TILE}"/>\n</tileset>\n`);
-fs.writeFileSync(path.join(TS_DIR, 'patch.png'), png.encodeBGRA(patchSheet, patchW, patchRows * TILE));
-fs.writeFileSync(path.join(TS_DIR, 'patch.tsx'),
-  `<?xml version="1.0" encoding="UTF-8"?>\n<tileset version="1.10" tiledversion="1.12.1" name="Design_Patch_16x16" ` +
+  ` <image source="${CHAR_FILE}.png" width="${charSheetW}" height="${charRows * TILE}"/>\n</tileset>\n`);
+fs.writeFileSync(path.join(TS_DIR, `${PATCH_FILE}.png`), png.encodeBGRA(patchSheet, patchW, patchRows * TILE));
+fs.writeFileSync(path.join(TS_DIR, `${PATCH_FILE}.tsx`),
+  `<?xml version="1.0" encoding="UTF-8"?>\n<tileset version="1.10" tiledversion="1.12.1" name="Design_Patch${CFG.suffix}_16x16" ` +
   `tilewidth="16" tileheight="16" tilecount="${patchCols * patchRows}" columns="${patchCols}">\n` +
-  ` <image source="patch.png" width="${patchW}" height="${patchRows * TILE}"/>\n</tileset>\n`);
+  ` <image source="${PATCH_FILE}.png" width="${patchW}" height="${patchRows * TILE}"/>\n</tileset>\n`);
 
 // Collision. Most architecture ends up in object layers rather than the Walls tile layer, so
 // deriving collision from that layer alone would leave the map almost entirely walkable.
@@ -523,6 +547,18 @@ for (let ty = 0; ty < rows; ty++) {
 // visibly walks through desks. 0.85 is the measured best trade-off, not a guess — it is the
 // loosest setting that still blocks the worst clipping while leaving the aisles usable.
 const BLOCK_COVERAGE = PX * 0.85;
+
+// The Walls tile layer is just "the second grid-aligned layer-0 tile in a cell", so it can hold
+// plain floor — a carpet patch or a floor tile laid over another floor tile. Treating all of it as
+// wall sealed a corridor in office_v3. The pack draws every wall and furniture edge with the same
+// dark outline colour and floor tiles never use it, so a Walls-layer tile blocks only if it has it.
+const OUTLINE = 0xff503a3a; // rgb(58,58,80) as little-endian BGRA
+const isStructural = (gid) => {
+  const s = activeSheets.find((sh) => gid >= sh.firstgid && gid < sh.firstgid + sh.cols * sh.rows);
+  const t = s && tileByKeyEarly.get(`${s.key}:${gid - s.firstgid}`);
+  return !t || t.solid.some((i) => t.buf.readUInt32LE(i * 4) === OUTLINE);
+};
+
 const blocked = new Uint8Array(cols * rows);
 for (let i = 0; i < cols * rows; i++) {
   // Both tests are required. "inside" alone lets the roof through, because wall art is
@@ -530,9 +566,46 @@ for (let i = 0; i < cols * rows; i++) {
   // bleeds outside the building — the carver then tunnelled along it and the player spawned
   // outside the office.
   if (!hasFloor[i] || !inside[i]) blocked[i] = 1;
-  else if (wallLayer[i]) blocked[i] = 1;              // wall art
+  else if (wallLayer[i] && isStructural(wallLayer[i])) blocked[i] = 1;   // wall art
   else if (coverage[i] >= BLOCK_COVERAGE) blocked[i] = 1;
 }
+// Cells the source knows are wall even though the coverage test can't see it (see compose_designs).
+for (const [tx, ty] of forceBlocked) if (tx >= 0 && ty >= 0 && tx < cols && ty < rows) blocked[ty * cols + tx] = 1;
+
+// Two gaps in the coverage test, both measured on the source pixels:
+//  1. Thick walls seen from above (a white cap block) live in layer 0 and often land in the Floor
+//     tile layer, so they count as floor with zero coverage. A cell whose layer-0 art is at least
+//     a quarter wall-cap white / outline is wall — floors never use those colours.
+//  2. Furniture that covers 50-85% of a cell (a plant, a printer table) stays walkable. Whole-cell
+//     coverage can't separate those from chairs, which cover as much, so chairs are listed as
+//     seats and every other cell is judged by the box the feet rest in (FEET_Y=12 in Character.js:
+//     x 3-12, y 4-11). 60% of that box covered means the character would stand on the furniture.
+//     The printer base beside the break-room entrance fills only the top of its cell (54% of the
+//     feet box), so the only way into that room stays open.
+const SEATS = CFG.seatRules ? require('./compose_designs.js').seatsFor(MAP_NAME) : [];
+const seatCells = new Set(SEATS.map((s) => s.tile[1] * cols + s.tile[0]));
+const WALL_COLOURS = new Set([0xff503a3a, 0xfff8f8f8, 0xfffdfdfd]); // outline, wall fill, cap fill
+const furnitureLayers = layerPx.filter((_, i) => i !== 0 && i !== CHARACTER_LAYER);
+let wallColourBlocked = 0, furnitureBlocked = 0;
+const wallColourCells = new Set(); // never tunnelled through: they have zero furniture cost
+for (let ty = 0; ty < rows && CFG.seatRules; ty++) for (let tx = 0; tx < cols; tx++) {
+  const i = ty * cols + tx;
+  if (blocked[i] || seatCells.has(i)) continue;
+  let wallPx = 0, feetPx = 0, feetTotal = 0;
+  for (let r = 0; r < TILE; r++) for (let c = 0; c < TILE; c++) {
+    const x = originX + tx * TILE + c, y = originY + ty * TILE + r;
+    if (x >= W || y >= H) continue;
+    const o = (y * W + x) * 4;
+    if (WALL_COLOURS.has(layerPx[0].readUInt32LE(o))) wallPx++;
+    if (c >= 3 && c <= 12 && r >= 4 && r <= 11) {
+      feetTotal++;
+      if (furnitureLayers.some((L) => L[o + 3] !== 0)) feetPx++;
+    }
+  }
+  if (wallPx >= PX / 4) { blocked[i] = 1; wallColourBlocked++; wallColourCells.add(i); }
+  else if (feetTotal && feetPx / feetTotal >= 0.6) { blocked[i] = 1; furnitureBlocked++; }
+}
+console.log(`\ncollision: wall-colour blocked ${wallColourBlocked}, furniture-under-feet blocked ${furnitureBlocked}, seats ${SEATS.length}`);
 
 function components(b) {
   const seen = new Uint8Array(cols * rows);
@@ -621,8 +694,10 @@ function carvePathBetweenRegions() {
  * there and the carver detoured to a single invisible tile at the far right edge that no
  * player would ever find.
  */
+const forcedSet = new Set(forceBlocked.map(([tx, ty]) => ty * cols + tx));
 function carveable(i) {
-  if (!inside[i] || wallLayer[i]) return false;
+  if (forcedSet.has(i) || wallColourCells.has(i)) return false;
+  if (!inside[i] || (wallLayer[i] && isStructural(wallLayer[i]))) return false;
   if (hasFloor[i]) return true;
   const x = i % cols, y = Math.floor(i / cols);
   let flanking = 0;
@@ -647,7 +722,7 @@ console.log(`
 collision: carved ${carved.length} doorway(s) ${carved.map((c) => '(' + c + ')').join(' ')}`);
 console.log(`  sealed ${stranded} unreachable cell(s); walkable region = ${main.size}`);
 
-fs.writeFileSync(path.join(CACHE, 'collision_debug.json'), JSON.stringify({
+fs.writeFileSync(path.join(CACHE, `collision_debug_${MAP_NAME}.json`), JSON.stringify({
   cols, rows,
   hasFloor: Array.from(hasFloor),
   inside: Array.from(inside),
@@ -673,10 +748,60 @@ const spawns = charBlobs.map((b, i) => ({
   x: (b.minx + b.maxx) / 2 - originX, y: b.maxy + 1 - originY,
 }));
 
+// Seats: the object sits on the tile you stand on to sit; its properties say where the character
+// goes once seated, which way it faces, and which chair overlay (if any) to draw over it.
+// Overlays are lifted from the source design into one generated sheet, a 16x32 frame each.
+const OVERLAY_FILE = `seat_overlays${CFG.suffix}`;
+const overlaySeats = SEATS.filter((s) => s.overlay);
+const overlaySheet = Buffer.alloc(Math.max(1, overlaySeats.length) * TILE * 32 * 4, 0);
+const overlaySheetW = Math.max(1, overlaySeats.length) * TILE;
+if (overlaySeats.length) {
+  const compose = require('./compose_designs.js');
+  const designs = {};
+  overlaySeats.forEach((s, k) => {
+    const { design, from } = s.overlay;
+    designs[design] = designs[design] || compose.designLayers(design);
+    const src = designs[design];
+    let same = 0, opaque = 0;
+    for (let y = 0; y < from.h; y++) for (let x = 0; x < from.w; x++) {
+      const so = ((from.y + y) * src.w + from.x + x) * 4;
+      const L = src.layers[from.layer];
+      if (!L[so + 3]) continue;
+      const d = (y * overlaySheetW + k * TILE + x) * 4;
+      overlaySheet[d] = L[so]; overlaySheet[d + 1] = L[so + 1]; overlaySheet[d + 2] = L[so + 2]; overlaySheet[d + 3] = L[so + 3];
+      // Sanity: the overlay must sit exactly on the chair it covers in the finished map.
+      const mx = s.overlay.x + x, my = s.overlay.y + y, mo = (my * W + mx) * 4;
+      opaque++;
+      if (layerPx[1][mo] === L[so] && layerPx[1][mo + 1] === L[so + 1] && layerPx[1][mo + 2] === L[so + 2]) same++;
+    }
+    s.overlayFrame = k;
+    console.log(`  seat overlay ${k} at (${s.overlay.x},${s.overlay.y}): ${same}/${opaque} px match the chair underneath`);
+  });
+  fs.writeFileSync(path.join(TS_DIR, `${OVERLAY_FILE}.png`), png.encodeBGRA(overlaySheet, overlaySheetW, 32));
+  fs.mkdirSync('public/assets/tilesets', { recursive: true });
+  fs.copyFileSync(path.join(TS_DIR, `${OVERLAY_FILE}.png`), path.join('public/assets/tilesets', `${OVERLAY_FILE}.png`));
+}
+const seatObjs = SEATS.map((s, k) => ({
+  id: nextId++, name: `seat_${k + 1}`, type: 'seat', rotation: 0, visible: true, point: true,
+  x: s.tile[0] * TILE + TILE / 2, y: s.tile[1] * TILE + 12,
+  properties: [
+    { name: 'facing', type: 'string', value: s.facing },
+    { name: 'sitX', type: 'float', value: s.sit[0] },
+    { name: 'sitY', type: 'float', value: s.sit[1] },
+    { name: 'overlayFrame', type: 'int', value: s.overlay ? s.overlayFrame : -1 },
+    { name: 'overlayX', type: 'float', value: s.overlay ? s.overlay.x : 0 },
+    { name: 'overlayY', type: 'float', value: s.overlay ? s.overlay.y : 0 },
+  ],
+}));
+if (overlaySeats.length) {
+  CFG.properties = [...(CFG.properties || []),
+    { name: 'seatOverlays', type: 'string', value: `assets/tilesets/${OVERLAY_FILE}.png` }];
+}
+
 const allTilesets = [
   ...tilesets.map(({ firstgid, source }) => ({ firstgid, source })),
-  { firstgid: charFirstGid, source: 'tilesets/characters.tsx' },
-  { firstgid: patchFirstGid, source: 'tilesets/patch.tsx' },
+  { firstgid: charFirstGid, source: `tilesets/${CHAR_FILE}.tsx` },
+  { firstgid: patchFirstGid, source: `tilesets/${PATCH_FILE}.tsx` },
 ];
 
 const map = {
@@ -684,6 +809,7 @@ const map = {
   tiledversion: '1.12.1', version: '1.10', type: 'map',
   width: cols, height: rows, tilewidth: TILE, tileheight: TILE,
   nextlayerid: 9, nextobjectid: nextId,
+  ...(CFG.properties ? { properties: CFG.properties } : {}),
   tilesets: allTilesets,
   layers: [
     { id: 1, name: 'Floor', type: 'tilelayer', visible: true, opacity: 1, x: 0, y: 0, width: cols, height: rows, data: floorLayer },
@@ -695,9 +821,10 @@ const map = {
     { id: 7, name: 'Patch', type: 'tilelayer', visible: true, opacity: 1, x: 0, y: 0, width: cols, height: rows, data: patchLayer },
     { id: 8, name: 'Collision', type: 'objectgroup', visible: false, opacity: 1, x: 0, y: 0, draworder: 'index', objects: collision },
     { id: 9, name: 'Spawns', type: 'objectgroup', visible: false, opacity: 1, x: 0, y: 0, draworder: 'index', objects: spawns },
+    ...(CFG.seatRules ? [{ id: 10, name: 'Seats', type: 'objectgroup', visible: false, opacity: 1, x: 0, y: 0, draworder: 'index', objects: seatObjs }] : []),
   ],
 };
-map.nextlayerid = 10;
+map.nextlayerid = CFG.seatRules ? 11 : 10;
 
 fs.writeFileSync(OUT_TMJ, JSON.stringify(map, null, 1));
 
@@ -715,8 +842,8 @@ for (const s of activeSheets) {
     tilecount: s.cols * s.rows, columns: s.cols, margin: 0, spacing: 0 });
 }
 for (const [file, firstgid, name, w, h, c] of [
-  ['characters.png', charFirstGid, 'Design_Characters_16x16', charSheetW, charRows * TILE, charCols],
-  ['patch.png', patchFirstGid, 'Design_Patch_16x16', patchW, patchRows * TILE, patchCols],
+  [`${CHAR_FILE}.png`, charFirstGid, `Design_Characters${CFG.suffix}_16x16`, charSheetW, charRows * TILE, charCols],
+  [`${PATCH_FILE}.png`, patchFirstGid, `Design_Patch${CFG.suffix}_16x16`, patchW, patchRows * TILE, patchCols],
 ]) {
   fs.copyFileSync(path.join(TS_DIR, file), path.join(PUB_TS, file));
   embedded.push({ firstgid, name, image: `assets/tilesets/${file}`, imagewidth: w, imageheight: h,
@@ -724,13 +851,13 @@ for (const [file, firstgid, name, w, h, c] of [
     margin: 0, spacing: 0 });
 }
 const gameMap = { ...map, tilesets: embedded };
-fs.writeFileSync(path.join(PUB_MAP, 'office_v2.json'), JSON.stringify(gameMap, null, 1));
-fs.writeFileSync(path.join(PUB_MAP, 'office_v2.manifest.json'), JSON.stringify(
+fs.writeFileSync(path.join(PUB_MAP, `${MAP_NAME}.json`), JSON.stringify(gameMap, null, 1));
+fs.writeFileSync(path.join(PUB_MAP, `${MAP_NAME}.manifest.json`), JSON.stringify(
   embedded.map((t) => ({ key: path.basename(t.image, '.png'), image: t.image, firstgid: t.firstgid,
     tilecount: t.tilecount, columns: t.columns })), null, 1));
 
 console.log(`\nwrote ${OUT_TMJ}: ${cols}x${rows}`);
-console.log(`wrote ${PUB_MAP}/office_v2.json (+ manifest, ${embedded.length} tilesets)`);
+console.log(`wrote ${PUB_MAP}/${MAP_NAME}.json (+ manifest, ${embedded.length} tilesets)`);
 console.log(`  Floor/Walls tiles : ${floorLayer.filter(Boolean).length}/${wallLayer.filter(Boolean).length}`);
 console.log(`  Structure objects : ${structureObjs.length}`);
 console.log(`  Furniture objects : ${furnitureObjs.length}`);

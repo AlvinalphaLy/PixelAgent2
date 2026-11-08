@@ -3,5 +3,7 @@ public/assets/tilesets/
 public/assets/characters/*.png
 maps/tilesets/*.png
 maps/*_preview.png
+# Build cache of raw tileset pixels (LimeZu art)
+.cache/
 
 node_modules/

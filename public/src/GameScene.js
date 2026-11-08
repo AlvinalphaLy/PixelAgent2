@@ -3,15 +3,26 @@ class GameScene extends Phaser.Scene {
    * @param {Array}  manifest tileset list emitted by the map build tools
    * @param {string} mapKey   base name, e.g. 'office_play' or 'office_v2'
    */
-  constructor(manifest, mapKey) {
+  constructor(manifest, mapKey, mapJson) {
     super('GameScene');
     this.manifest = manifest;
     this.mapKey = mapKey;
+    this.mapJson = mapJson || {};
     this.characterName = 'Adam';
+  }
+
+  /** A map-level property from the raw map JSON (available before Phaser parses the map). */
+  mapProp(name) {
+    const props = Array.isArray(this.mapJson.properties) ? this.mapJson.properties : [];
+    const p = props.find((pr) => pr.name === name);
+    return p ? p.value : undefined;
   }
 
   preload() {
     this.load.tilemapTiledJSON('map', `assets/maps/${this.mapKey}.json`);
+    // Chair art drawn back over a character sitting facing up (see Character.sitAt).
+    const overlays = this.mapProp('seatOverlays');
+    if (overlays) this.load.spritesheet('seat_overlays', overlays, { frameWidth: 16, frameHeight: 32 });
     for (const ts of this.manifest) {
       this.load.image(ts.key, ts.image);
       // Spritesheet twin: object layers are placed by frame index, because Phaser's
@@ -65,6 +76,21 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
+    // Seats (chairs) declared by the map: sitting while standing on one snaps onto it and faces
+    // the chair's way. Elsewhere you still sit where you stand.
+    this.seats = (map.getObjectLayer('Seats') || { objects: [] }).objects.map((o) => {
+      const props = Array.isArray(o.properties) ? o.properties : [];
+      const get = (n, d) => { const p = props.find((pr) => pr.name === n); return p ? p.value : d; };
+      return {
+        tx: Math.floor(o.x / 16), ty: Math.floor((o.y - 1) / 16), x: o.x, y: o.y,   // stand-here tile
+        facing: get('facing', 'right'),
+        sitX: get('sitX', o.x), sitY: get('sitY', o.y),                           // feet once seated
+        overlayFrame: get('overlayFrame', -1), overlayX: get('overlayX', 0), overlayY: get('overlayY', 0),
+      };
+    });
+    this.seat = null;          // the seat currently in use
+    this.seatOverlay = null;   // chair image drawn over the character while sitting facing up
+
     const spawn = this.findSpawn(map);
     this.pathfinder = new Pathfinder(map);
     this.player = new Character(this, spawn.x, spawn.y, this.characterName, {
@@ -98,8 +124,14 @@ class GameScene extends Phaser.Scene {
     const mode = prop ? prop.value : 'fit';
 
     if (mode === 'follow') {
-      cam.setZoom(2);
-      cam.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
+      const zoom = 2;
+      cam.setZoom(zoom);
+      // On an axis where the map is smaller than the view, widen the bounds symmetrically so
+      // the map sits centred instead of pinned to the top-left (office_v3 is 272px tall, the
+      // view at 2x is 320).
+      const mw = map.widthInPixels, mh = map.heightInPixels;
+      const bw = Math.max(mw, cam.width / zoom), bh = Math.max(mh, cam.height / zoom);
+      cam.setBounds((mw - bw) / 2, (mh - bh) / 2, bw, bh);
       cam.startFollow(this.player.sprite, true);
       return;
     }
@@ -113,6 +145,25 @@ class GameScene extends Phaser.Scene {
       cam.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
       cam.startFollow(this.player.sprite, true);
     }
+  }
+
+  /** Sit on a declared seat, posed for the chair's direction, with the chair over you if facing up. */
+  sitOn(seat) {
+    this.seat = seat;
+    this.player.sitAt(seat.sitX, seat.sitY, seat.facing);
+    if (seat.overlayFrame >= 0 && this.textures.exists('seat_overlays')) {
+      this.seatOverlay = this.add.image(seat.overlayX, seat.overlayY, 'seat_overlays', seat.overlayFrame)
+        .setOrigin(0, 0)
+        .setDepth(this.player.sprite.depth + 1);
+    }
+  }
+
+  /** Stand up; from a seat, step back onto the tile it was used from. */
+  standUp() {
+    if (this.seatOverlay) { this.seatOverlay.destroy(); this.seatOverlay = null; }
+    if (this.seat) this.player.stand(this.seat.x, this.seat.y);
+    else this.player.stand();
+    this.seat = null;
   }
 
   tilesetFor(gid) {
@@ -152,7 +203,7 @@ class GameScene extends Phaser.Scene {
         // Tie-break toward the middle of the map so we start somewhere central.
         const centred = -(Math.abs(x - map.width / 2) + Math.abs(y - map.height / 2)) / 100;
         const score = open + centred;
-        if (!best || score > best.score) best = { score, x: x * 16 + 8, y: y * 16 + 16 };
+        if (!best || score > best.score) best = { score, x: x * 16 + 8, y: y * 16 + Character.FEET_Y };
       }
     }
     return best || { x: 24, y: 24 };
@@ -172,14 +223,19 @@ class GameScene extends Phaser.Scene {
     const JustDown = Phaser.Input.Keyboard.JustDown;
     const toggleSit = Object.values(this.sitKeys).some((k) => JustDown(k));
     if (toggleSit) {
-      if (this.player.seated) this.player.stand();
-      else { this.path = []; this.player.sit(this.player.facing); }
+      if (this.player.seated) this.standUp();
+      else {
+        this.path = [];
+        const seat = this.seats.find((s) => s.tx === this.player.tileX && s.ty === this.player.tileY);
+        if (seat) this.sitOn(seat);
+        else this.player.sit(this.player.facing);
+      }
       return;
     }
     // Walking away from a seat stands you up, so you never get stuck sitting.
     if (this.player.seated) {
       if (!keyed) return;
-      this.player.stand();
+      this.standUp();
     }
 
     if (keyed) {
@@ -188,7 +244,11 @@ class GameScene extends Phaser.Scene {
     } else if (this.path.length) {
       // Steer toward the next waypoint's centre using the same intent API as the keyboard.
       const next = this.path[0];
-      const tx = next.x * 16 + 8, ty = next.y * 16 + 16;
+      // Aim the feet at the middle of the tile, not its bottom edge: the 8px-tall feet body then
+      // has 4px of slack on each side. Aiming at the edge put the body exactly on the row
+      // boundary, so a half-pixel overshoot snagged on blocked cells below (stuck at office_v3
+      // (5,11), unable to turn into the break room).
+      const tx = next.x * 16 + 8, ty = next.y * 16 + Character.FEET_Y;
       const dx = tx - this.player.x, dy = ty - this.player.y;
       if (Math.hypot(dx, dy) < 2) this.path.shift();
       else this.player.setIntent(dx, dy);

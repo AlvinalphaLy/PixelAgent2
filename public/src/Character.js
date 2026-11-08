@@ -31,6 +31,8 @@ class Character {
     // body makes doorways impassable.
     const bw = opts.bodyWidth || 10;
     const bh = opts.bodyHeight || 8;
+    this.bodyW = bw;
+    this.bodyH = bh;
     this.sprite.body.setSize(bw, bh);
     this.sprite.body.setOffset((CharacterAnims.FRAME_W - bw) / 2, CharacterAnims.FRAME_H - bh);
     this.sprite.setCollideWorldBounds(true);
@@ -55,9 +57,32 @@ class Character {
     this.play(variant);
   }
 
-  stand() {
+  /**
+   * Sit on a chair: feet at (x, y), posed for the way the chair faces.
+   *   left / right — 'sit' (side-on, at a desk)
+   *   down         — 'sit3' (facing the viewer)
+   *   up           — the walking 'up' frame; the caller draws the chair over the body, since the
+   *                  pack has no sitting-from-behind art (LimeZu's own designs do the same)
+   * The physics body is switched off while seated: a seated pose can overlap the chair's blocked
+   * cell, and the arcade collider would otherwise shove the character out of the chair.
+   */
+  sitAt(x, y, facing) {
+    const pose = facing === 'down' ? 'sit3' : facing === 'up' ? 'idle_anim' : 'sit';
+    this.sprite.body.setVelocity(0, 0);
+    this.sprite.body.reset(x, y);
+    this.sprite.body.enable = false;
+    this.seated = true;
+    this.facing = CharacterAnims.resolveDir(pose, facing);
+    this.setIntent(0, 0);
+    this.play(pose);
+  }
+
+  /** Stand up; optionally step back to (x, y) — the tile the seat was used from. */
+  stand(x, y) {
     if (!this.seated) return;
     this.seated = false;
+    this.sprite.body.enable = true;
+    if (x !== undefined) this.sprite.body.reset(x, y);
     this.play('idle_anim');
   }
 
@@ -66,6 +91,11 @@ class Character {
     const key = CharacterAnims.animKey(this.name, sheet, dir);
     if (this.scene.anims.exists(key)) this.sprite.play(key, true);
     this.currentSheet = sheet;
+    // The body offset is measured from the frame's left edge, and sitting frames are 32px wide
+    // against 16px for walking. Without re-centring, sitting shifted the feet body 8px left —
+    // enough to push the character off a seat at the map edge.
+    const fw = (CharacterAnims.SHEETS[sheet] || {}).w || CharacterAnims.FRAME_W;
+    this.sprite.body.setOffset((fw - this.bodyW) / 2, CharacterAnims.FRAME_H - this.bodyH);
   }
 
   get x() { return this.sprite.x; }
@@ -104,7 +134,7 @@ class Character {
       else if (canWalk(ahead, ty - 1)) lane = ty - 1;
       else if (canWalk(ahead, ty + 1)) lane = ty + 1;
       if (lane !== null) {
-        const off = (lane * TILE + TILE) - this.sprite.y;
+        const off = (lane * TILE + Character.FEET_Y) - this.sprite.y;
         if (Math.abs(off) > 0.5) vy = Math.sign(off) * Math.min(this.speed, Math.abs(off) * 8);
       }
     }
@@ -122,5 +152,10 @@ class Character {
     if (this.sprite.anims.currentAnim?.key !== key) this.play(wanted);
   }
 }
+
+// Where in a tile the feet rest, in px from its top. The feet body is 8px tall, so 12 centres it
+// in the tile with 4px clearance above and below; resting on the tile's bottom edge (16) leaves
+// the body touching the next row, where any overshoot collides with a blocked cell.
+Character.FEET_Y = 12;
 
 if (typeof module !== 'undefined') module.exports = Character;

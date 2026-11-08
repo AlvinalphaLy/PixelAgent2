@@ -16,29 +16,41 @@ const ase = require('./aseprite.js');
 const png = require('./png.js');
 
 const ASE = 'public/assets/tilesets/Modern_Office_Revamped_v1.2/6_Office_Designs/Office_Design_2.aseprite';
-const OUT = process.env.VERIFY_OUT ||
-  'C:/Users/alvin/AppData/Local/Temp/claude/d--PixelAgents2/ba7261ae-5370-41e3-88dc-68802d6b2247/scratchpad';
+const OUT = process.env.VERIFY_OUT || '.cache';
+// `node tools/verify_phaser.js [office_v2|office_v3]`. PW_CHANNEL=msedge drives the installed
+// Edge instead of a Playwright-downloaded Chromium.
+const MAP_NAME = process.argv[2] || 'office_v2';
 
 (async () => {
-  const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 400, height: 400 }, deviceScaleFactor: 1 });
+  fs.mkdirSync(OUT, { recursive: true });
+  const browser = await chromium.launch(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {});
+  const page = await browser.newPage({ viewport: { width: 600, height: 400 }, deviceScaleFactor: 1 });
   const errors = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
 
-  await page.goto('http://localhost:8080/?map=office_v2&pixeltest', { waitUntil: 'networkidle' });
+  const base = process.env.VERIFY_BASE || 'http://localhost:8080';
+  await page.goto(`${base}/?map=${MAP_NAME}&pixeltest`, { waitUntil: 'networkidle' });
   await page.waitForFunction(() => window.game && window.game.scene.getScene('GameScene') &&
     window.game.scene.getScene('GameScene').pixelTest !== undefined, { timeout: 15000 });
   await page.waitForTimeout(1200);
 
-  const shotPath = path.join(OUT, 'phaser_canvas.png');
+  const shotPath = path.join(OUT, `phaser_canvas_${MAP_NAME}.png`);
   await page.locator('canvas').screenshot({ path: shotPath });
   await browser.close();
 
   const shot = png.decodeToBGRA(fs.readFileSync(shotPath));
 
-  const doc = ase.parse(ASE);
-  const truth = Buffer.alloc(doc.width * doc.height * 4, 0);
+  let doc, truth;
+  if (MAP_NAME === 'office_v3') {
+    const compose = require('./compose_designs.js');
+    const comp = compose.compose();
+    doc = { width: comp.width, height: comp.height, layers: [] };
+    truth = compose.flatten(comp);
+  } else {
+    doc = ase.parse(ASE);
+    truth = Buffer.alloc(doc.width * doc.height * 4, 0);
+  }
   for (const l of doc.layers) {
     const p = ase.layerToBGRA(doc, l.index, 0);
     for (let i = 0; i < truth.length; i += 4) {
